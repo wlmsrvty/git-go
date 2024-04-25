@@ -149,7 +149,7 @@ func git_hash_object(Args []string) {
 		check(err)
 		defer objectFile.Close()
 
-		zlibWriter := zlib.NewWriter(f)
+		zlibWriter := zlib.NewWriter(objectFile)
 		defer zlibWriter.Close()
 
 		zlibWriter.Write([]byte(header))
