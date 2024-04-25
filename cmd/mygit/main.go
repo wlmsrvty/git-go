@@ -4,15 +4,29 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"crypto/sha1"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 )
 
+func helpUsage() {
+	usage := []string{
+		"usage: mygit <command> [<args>...]",
+		"\tmygit init",
+		"\tmygit cat-file -p <blob_sha>",
+		"\tmygit hash-object -w <file_path>",
+	}
+	for _, line := range usage {
+		fmt.Fprintf(os.Stderr, "%s\n", line)
+	}
+}
+
 // Usage: your_git.sh <command> <arg1> <arg2> ...
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: mygit <command> [<args>...]\n")
+		helpUsage()
 		os.Exit(1)
 	}
 
@@ -26,6 +40,9 @@ func main() {
 			os.Exit(1)
 		}
 		git_cat_file(os.Args[2:])
+
+	case "hash-object":
+		git_hash_object(os.Args[2:])
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
@@ -97,4 +114,44 @@ func git_cat_file(Args []string) {
 	_, err = io.Copy(os.Stdout, bufioReader)
 	check(err)
 	zlibReader.Close()
+}
+
+func git_hash_object(Args []string) {
+	// writeOption := Args[0] // -w
+	filePath := Args[1]
+	fileInfo, err := os.Stat(filePath)
+	check(err)
+
+	header := fmt.Sprintf("blob %d\000", fileInfo.Size())
+
+	h := sha1.New()
+
+	f, err := os.Open(filePath)
+	check(err)
+	defer f.Close()
+
+	_, err = h.Write([]byte(header))
+	check(err)
+
+	_, err = io.Copy(h, f)
+	check(err)
+
+	shaString := fmt.Sprintf("%x", h.Sum(nil))
+	objectPath := fmt.Sprintf(".git/objects/%s/%s", shaString[:2], shaString[2:])
+
+	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
+		objectFile, err := os.Create(objectPath)
+		check(err)
+		defer objectFile.Close()
+
+		zlibWriter := zlib.NewWriter(f)
+		defer zlibWriter.Close()
+
+		zlibWriter.Write([]byte(header))
+
+		f.Seek(0, 0)
+		io.Copy(zlibWriter, f)
+	}
+
+	fmt.Printf("%x\n", h.Sum(nil))
 }
