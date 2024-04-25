@@ -137,9 +137,14 @@ func git_hash_object(Args []string) {
 	check(err)
 
 	shaString := fmt.Sprintf("%x", h.Sum(nil))
+	objectFolderPath := fmt.Sprintf(".git/objects/%s", shaString[:2])
 	objectPath := fmt.Sprintf(".git/objects/%s/%s", shaString[:2], shaString[2:])
 
 	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(objectFolderPath, 0755); !errors.Is(err, os.ErrExist) {
+			check(err)
+		}
+
 		objectFile, err := os.Create(objectPath)
 		check(err)
 		defer objectFile.Close()
@@ -153,5 +158,5 @@ func git_hash_object(Args []string) {
 		io.Copy(zlibWriter, f)
 	}
 
-	fmt.Printf("%x\n", h.Sum(nil))
+	fmt.Printf("%s\n", shaString)
 }
