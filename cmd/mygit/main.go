@@ -6,147 +6,238 @@ import (
 	"compress/zlib"
 	"crypto/sha1"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 )
 
-func helpUsage() {
-	usage := []string{
-		"usage: mygit <command> [<args>...]",
-		"\tmygit init",
-		"\tmygit cat-file -p <blob_sha>",
-		"\tmygit hash-object -w <file_path>",
-	}
-	for _, line := range usage {
-		fmt.Fprintf(os.Stderr, "%s\n", line)
-	}
+type Command struct {
+	Name string
+	Run  func(args []string) error
 }
 
-// Usage: your_git.sh <command> <arg1> <arg2> ...
+var commands = []Command{
+	{Name: "init",
+		Run: git_init},
+	{Name: "cat-file",
+		Run: git_cat_file},
+	{Name: "hash-object",
+		Run: git_hash_object},
+}
+
+func Usage() {
+	usage := `Usage: mygit <command> [<args>...]
+
+Commands:
+    init        Initialize the git directory structure
+    cat-file    Provide content or type and size information for repository objects
+    hash-object Compute object ID and optionally creates a blob from a file
+    `
+	fmt.Fprintf(os.Stderr, "%s", usage)
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		helpUsage()
+	flag.Usage = Usage
+	flag.Parse()
+
+	if len(flag.Args()) < 1 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	switch command := os.Args[1]; command {
-	case "init":
-		git_init()
+	subCmd := flag.Arg(0)
+	subCmdArgs := flag.Args()[1:]
 
-	case "cat-file":
-		if len(os.Args) < 3 {
-			fmt.Fprintf(os.Stderr, "usage: mygit cat-file <blob_sha>\n")
-			os.Exit(1)
+	for _, cmd := range commands {
+		if cmd.Name == subCmd {
+			if err := cmd.Run(subCmdArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+				os.Exit(1)
+			}
+			return
 		}
-		git_cat_file(os.Args[2:])
-
-	case "hash-object":
-		git_hash_object(os.Args[2:])
-
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
-		os.Exit(1)
 	}
+
+	fmt.Fprintf(os.Stderr, "Unknown command %s\n", subCmd)
+	flag.Usage()
+	os.Exit(1)
 }
 
-func check(err error) {
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+func git_init(args []string) error {
+	flagSet := flag.NewFlagSet("init", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Create an empty Git repository or reinitialize an existing one
+
+        Usage: mygit init`)
 	}
-}
-
-func git_init() {
-	/*
-	   Initialize the git directory structure
-	   https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-
-	   .git/
-	   .git/objects/
-	   .git/refs/
-	*/
+	flagSet.Parse(args)
 
 	dirs := []string{".git", ".git/objects", ".git/refs"}
+	existing := false
 	for _, dir := range dirs {
+		if stat, err := os.Stat(dir); !os.IsNotExist(err) {
+			if stat.IsDir() {
+				existing = true
+			} else {
+				return fmt.Errorf("existing %s is not a directory", dir)
+			}
+		}
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating directory: %s\n", err)
+			return err
 		}
 	}
 
 	headFileContents := []byte("ref: refs/heads/main\n")
 	if err := os.WriteFile(".git/HEAD", headFileContents, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing file: %s\n", err)
+		return err
 	}
 
-	fmt.Println("Initialized git directory")
-}
-
-func git_cat_file_error() {
-	fmt.Fprintf(os.Stderr, "usage: mygit cat-file -p <blob_sha>\n")
-	os.Exit(1)
-}
-
-func git_cat_file(Args []string) {
-	if len(Args) < 2 || Args[0] != "-p" {
-		git_cat_file_error()
+	path, err := os.Getwd()
+	if err != nil {
+		return err
 	}
-	blob_sha := Args[1]
-	path := fmt.Sprintf(".git/objects/%s/%s", blob_sha[:2], blob_sha[2:])
-	if _, err := os.Stat(path); err != nil {
-		fmt.Fprintf(os.Stderr, "File not found: %s\n", path)
+
+	if existing {
+		fmt.Printf("Reinitialized existing Git repository in %s\n", path)
+	} else {
+		fmt.Printf("Initialized empty Git repository in %s/.git/\n", path)
+	}
+
+	return nil
+}
+
+func git_cat_file(args []string) error {
+	var prettyPrint bool
+	flagSet := flag.NewFlagSet("cat-file", flag.ExitOnError)
+	flagSet.BoolVar(&prettyPrint, "p", false,
+		"Pretty-print the contents of the object to the terminal")
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Provide content or type and size information for repository objects
+
+Usage: mygit cat-file [options] <blob_sha>`)
+		flagSet.PrintDefaults()
+	}
+	flagSet.Parse(args)
+
+	if flagSet.NArg() < 1 {
+		flagSet.Usage()
 		os.Exit(1)
 	}
+
+	blob_sha := flagSet.Arg(0)
+
+	// Check if the object exists
+	path := fmt.Sprintf(".git/objects/%s/%s", blob_sha[:2], blob_sha[2:])
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("object file not found: %s", path)
+	}
+
+	// Read the object
 	data, err := os.ReadFile(path)
-	check(err)
+	if err != nil {
+		return err
+	}
+
+	// Get bytes buffer from data
 	bytes := bytes.NewBuffer(data)
+
+	// Decompress the object using zlib reader
 	zlibReader, err := zlib.NewReader(bytes)
-	check(err)
+	if err != nil {
+		return err
+	}
+	defer zlibReader.Close()
+
+	// Use a new reader to skip the header
 	bufioReader := bufio.NewReader(zlibReader)
 	// skip until the first null byte
 	for {
 		b, err := bufioReader.ReadByte()
-		check(err)
+		if err != nil {
+			return err
+		}
 		if b == 0 {
 			break
 		}
 	}
+
+	// Pretty print the contents of the object to the terminal
 	_, err = io.Copy(os.Stdout, bufioReader)
-	check(err)
-	zlibReader.Close()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func git_hash_object(Args []string) {
-	// writeOption := Args[0] // -w
-	filePath := Args[1]
+func git_hash_object(args []string) error {
+	var writeOption bool
+	flagSet := flag.NewFlagSet("hash-object", flag.ExitOnError)
+	flagSet.BoolVar(&writeOption, "w", false,
+		"Actually write the object into the database")
+
+	flagSet.Usage = func() {
+		fmt.Fprintf(os.Stderr,
+			`Compute object ID and optionally creates a blob from a file
+
+Usage: mygit hash-object [options] <file>`)
+		flagSet.PrintDefaults()
+	}
+
+	flagSet.Parse(args)
+
+	if flagSet.NArg() < 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	filePath := flagSet.Arg(0)
 	fileInfo, err := os.Stat(filePath)
-	check(err)
+	if err != nil {
+		return err
+	}
 
 	header := fmt.Sprintf("blob %d\000", fileInfo.Size())
 
-	h := sha1.New()
+	hash := sha1.New()
 
-	f, err := os.Open(filePath)
-	check(err)
-	defer f.Close()
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-	_, err = h.Write([]byte(header))
-	check(err)
+	if _, err = hash.Write([]byte(header)); err != nil {
+		return err
+	}
 
-	_, err = io.Copy(h, f)
-	check(err)
+	if _, err = io.Copy(hash, file); err != nil {
+		return err
+	}
 
-	shaString := fmt.Sprintf("%x", h.Sum(nil))
+	shaString := fmt.Sprintf("%x", hash.Sum(nil))
+
+	fmt.Printf("%s\n", shaString)
+
+	if !writeOption {
+		return nil
+	}
+
 	objectFolderPath := fmt.Sprintf(".git/objects/%s", shaString[:2])
 	objectPath := fmt.Sprintf(".git/objects/%s/%s", shaString[:2], shaString[2:])
 
 	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.Mkdir(objectFolderPath, 0755); !errors.Is(err, os.ErrExist) {
-			check(err)
+			return err
 		}
 
 		objectFile, err := os.Create(objectPath)
-		check(err)
+		if err != nil {
+			return err
+		}
 		defer objectFile.Close()
 
 		zlibWriter := zlib.NewWriter(objectFile)
@@ -154,9 +245,9 @@ func git_hash_object(Args []string) {
 
 		zlibWriter.Write([]byte(header))
 
-		f.Seek(0, 0)
-		io.Copy(zlibWriter, f)
+		file.Seek(0, 0)
+		io.Copy(zlibWriter, file)
 	}
 
-	fmt.Printf("%s\n", shaString)
+	return nil
 }
