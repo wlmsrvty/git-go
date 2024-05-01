@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
 	"errors"
@@ -10,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 )
 
 type Command struct {
@@ -24,6 +25,8 @@ var commands = []Command{
 		Run: git_cat_file},
 	{Name: "hash-object",
 		Run: git_hash_object},
+	{Name: "ls-tree",
+		Run: git_ls_tree},
 }
 
 func Usage() {
@@ -32,9 +35,8 @@ func Usage() {
 Commands:
     init        Initialize the git directory structure
     cat-file    Provide content or type and size information for repository objects
-    hash-object Compute object ID and optionally creates a blob from a file
-    `
-	fmt.Fprintf(os.Stderr, "%s", usage)
+    hash-object Compute object ID and optionally creates a blob from a file`
+	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
 func main() {
@@ -108,6 +110,10 @@ func git_init(args []string) error {
 	return nil
 }
 
+func getObjectPath(sha string) string {
+	return fmt.Sprintf(".git/objects/%s/%s", sha[:2], sha[2:])
+}
+
 func git_cat_file(args []string) error {
 	var prettyPrint bool
 	flagSet := flag.NewFlagSet("cat-file", flag.ExitOnError)
@@ -129,39 +135,29 @@ Usage: mygit cat-file [options] <blob_sha>`)
 
 	blob_sha := flagSet.Arg(0)
 
-	// Check if the object exists
-	path := fmt.Sprintf(".git/objects/%s/%s", blob_sha[:2], blob_sha[2:])
+	path := getObjectPath(blob_sha)
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("object file not found: %s", path)
 	}
 
-	// Read the object
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-
-	// Get bytes buffer from data
-	bytes := bytes.NewBuffer(data)
+	defer file.Close()
 
 	// Decompress the object using zlib reader
-	zlibReader, err := zlib.NewReader(bytes)
+	zlibReader, err := zlib.NewReader(file)
 	if err != nil {
 		return err
 	}
 	defer zlibReader.Close()
 
-	// Use a new reader to skip the header
 	bufioReader := bufio.NewReader(zlibReader)
-	// skip until the first null byte
-	for {
-		b, err := bufioReader.ReadByte()
-		if err != nil {
-			return err
-		}
-		if b == 0 {
-			break
-		}
+
+	_, _, err = parseHeader(bufioReader)
+	if err != nil {
+		return fmt.Errorf("invalid object format")
 	}
 
 	// Pretty print the contents of the object to the terminal
@@ -180,7 +176,7 @@ func git_hash_object(args []string) error {
 		"Actually write the object into the database")
 
 	flagSet.Usage = func() {
-		fmt.Fprintf(os.Stderr,
+		fmt.Fprintln(os.Stderr,
 			`Compute object ID and optionally creates a blob from a file
 
 Usage: mygit hash-object [options] <file>`)
@@ -247,6 +243,152 @@ Usage: mygit hash-object [options] <file>`)
 
 		file.Seek(0, 0)
 		io.Copy(zlibWriter, file)
+	}
+
+	return nil
+}
+
+type ObjectType string
+
+const (
+	ObjectTypeBlob ObjectType = "blob"
+	ObjectTypeTree ObjectType = "tree"
+)
+
+type TreeEntry struct {
+	Mode string
+	Type ObjectType
+	Hash string
+	Name string
+}
+
+func parseHeader(objectReader *bufio.Reader) (ObjectType, int, error) {
+	/*
+		Header:
+			<type> <size>\x00<content>
+	*/
+
+	header, err := objectReader.ReadString(0)
+	if err != nil {
+		return "", 0, err
+	}
+
+	split := strings.Split(header[:len(header)-1], " ")
+	if len(split) != 2 {
+		return "", 0, fmt.Errorf("invalid object format")
+	}
+
+	objType := ObjectType(split[0])
+	objSize, err := strconv.Atoi(split[1])
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid object size")
+	}
+
+	return objType, objSize, nil
+}
+
+func parseTree(objContent *bufio.Reader) ([]TreeEntry, error) {
+
+	/*
+		Format of the tree object:
+			tree <size>\x00<entry><entry>...
+		Format of the entry:
+			<mode> <name>\x00<20_byte_hash>
+	*/
+
+	entries := []TreeEntry{}
+
+	for {
+		header, err := objContent.ReadString(0)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+
+		split := strings.Split(header[:len(header)-1], " ")
+		if len(split) != 2 {
+			return nil, fmt.Errorf("invalid tree entry format")
+		}
+
+		mode := split[0]
+		name := split[1]
+
+		hash := make([]byte, 20)
+		if _, err := objContent.Read(hash); err != nil {
+			return nil, err
+		}
+
+		objType := ObjectTypeBlob
+		if mode == "40000" {
+			objType = ObjectTypeTree
+		}
+
+		entries = append(entries, TreeEntry{
+			Mode: mode,
+			Type: objType,
+			Hash: fmt.Sprintf("%x", hash),
+			Name: name,
+		})
+	}
+
+	return entries, nil
+}
+
+func git_ls_tree(args []string) error {
+	flagSet := flag.NewFlagSet("ls-tree", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`List the contents of a tree object
+
+Usage: mygit ls-tree [options] <tree_sha>`)
+		flagSet.PrintDefaults()
+	}
+
+	var nameOnlyOption bool
+	flagSet.BoolVar(&nameOnlyOption, "name-only", false, "List only filenames")
+
+	flagSet.Parse(args)
+
+	if flagSet.NArg() < 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	tree_sha := flagSet.Arg(0)
+	path := getObjectPath(tree_sha)
+
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	zlibReader, err := zlib.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer zlibReader.Close()
+
+	bufioReader := bufio.NewReader(zlibReader)
+
+	objType, _, err := parseHeader(bufioReader)
+	if err != nil {
+		return err
+	}
+
+	if objType != ObjectTypeTree {
+		return fmt.Errorf("%s is not a tree object", tree_sha)
+	}
+
+	treeEntries, err := parseTree(bufioReader)
+	if err != nil {
+		return err
+	}
+
+	for _, treeEntry := range treeEntries {
+		fmt.Println(treeEntry.Name)
 	}
 
 	return nil
