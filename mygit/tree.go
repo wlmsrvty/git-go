@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// ObjectType represents the type of a git object
 type ObjectType string
 
 const (
@@ -16,6 +17,7 @@ const (
 	ObjectTypeTree ObjectType = "tree"
 )
 
+// TreeEntry represents an entry in a git tree object
 type TreeEntry struct {
 	Mode string
 	Type ObjectType
@@ -27,6 +29,7 @@ type PrintTreeContentOptions struct {
 	NameOnly bool
 }
 
+// PrintTreeContent prints every entry in a tree object
 func (o *Object) PrintTreeContent(options *PrintTreeContentOptions) error {
 	if o.Type != ObjectTypeTree {
 		return fmt.Errorf("object %s is not a tree", o.Hash)
@@ -50,11 +53,11 @@ func (o *Object) PrintTreeContent(options *PrintTreeContentOptions) error {
 	return nil
 }
 
+// parseTree parses all entries in a tree object
+// Format of the tree object content:
+//
+//	<mode> <name>\x00<20_byte_hash>
 func parseTree(objContent *bufio.Reader) ([]TreeEntry, error) {
-	// Format of the tree object:
-	// 	tree <size>\x00<entry><entry>...
-	// Format of the entry:
-	//	<mode> <name>\x00<20_byte_hash>
 
 	entries := []TreeEntry{}
 

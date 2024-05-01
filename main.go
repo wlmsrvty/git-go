@@ -75,10 +75,6 @@ func gitInit(args []string) error {
 	return mygit.Initialize()
 }
 
-func getObjectPath(sha string) string {
-	return fmt.Sprintf(".git/objects/%s/%s", sha[:2], sha[2:])
-}
-
 func git_cat_file(args []string) error {
 	var prettyPrint bool
 	flagSet := flag.NewFlagSet("cat-file", flag.ExitOnError)

@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// Object represents a git object
 type Object struct {
 	Type    ObjectType
 	Size    int
@@ -44,7 +45,7 @@ func NewObject(sha string) (*Object, error) {
 
 	bufioReader := bufio.NewReader(zlibReader)
 
-	objType, objSize, err := ParseHeader(bufioReader)
+	objType, objSize, err := parseHeader(bufioReader)
 	if err != nil {
 		return nil, err
 	}
@@ -63,11 +64,9 @@ func NewObject(sha string) (*Object, error) {
 	}, nil
 }
 
-func ParseHeader(objectReader *bufio.Reader) (ObjectType, int, error) {
-	/*
-		Header:
-			<type> <size>\x00<content>
-	*/
+// parseHeader parses the header of a git object
+// Git object header format: <type> <size>\x00<content>
+func parseHeader(objectReader *bufio.Reader) (ObjectType, int, error) {
 
 	header, err := objectReader.ReadString(0)
 	if err != nil {

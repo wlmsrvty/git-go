@@ -5,6 +5,7 @@ import (
 	"os"
 )
 
+// Initialize creates the necessary directories and files for a new git repository
 func Initialize() error {
 	dirs := []string{".git", ".git/objects", ".git/refs"}
 	existing := false
