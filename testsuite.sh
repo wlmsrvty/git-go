@@ -3,11 +3,16 @@
 tmpFolder=$(mktemp -d)
 
 build() {
-    ( cd $(dirname "$0") &&
-	    go build -buildvcs="false" -o "$tmpFolder/mygit" ./cmd/mygit )
+    go build -o "$tmpFolder/mygit"
 }
 
 build
+if [ -f "$tmpFolder/mygit" ]; then
+    echo "Build successful"
+else
+    echo "Build failed"
+    exit 1
+fi
 
 for test in tests/*.sh
 do
