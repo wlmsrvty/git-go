@@ -226,7 +226,7 @@ Usage: mygit hash-object [options] <file>`)
 	objectPath := fmt.Sprintf(".git/objects/%s/%s", shaString[:2], shaString[2:])
 
 	if _, err := os.Stat(objectPath); errors.Is(err, os.ErrNotExist) {
-		if err := os.Mkdir(objectFolderPath, 0755); err != nil &&
+		if err := os.MkdirAll(objectFolderPath, 0755); err != nil &&
 			!errors.Is(err, os.ErrExist) {
 			return err
 		}
