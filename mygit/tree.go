@@ -19,10 +19,11 @@ const (
 
 // TreeEntry represents an entry in a git tree object
 type TreeEntry struct {
-	Mode string
-	Type ObjectType
-	Hash string
-	Name string
+	Mode      string
+	Type      ObjectType
+	Hash      string
+	HashBytes []byte
+	Name      string
 }
 
 type PrintTreeContentOptions struct {
@@ -89,10 +90,11 @@ func parseTree(objContent *bufio.Reader) ([]TreeEntry, error) {
 		}
 
 		entries = append(entries, TreeEntry{
-			Mode: mode,
-			Type: objType,
-			Hash: fmt.Sprintf("%x", hash),
-			Name: name,
+			Mode:      mode,
+			Type:      objType,
+			Hash:      fmt.Sprintf("%x", hash),
+			HashBytes: hash,
+			Name:      name,
 		})
 	}
 

@@ -22,6 +22,8 @@ var commands = []Command{
 		Run: git_hash_object},
 	{Name: "ls-tree",
 		Run: git_ls_tree},
+	{Name: "write-tree",
+		Run: writeTree},
 }
 
 func Usage() {
@@ -31,7 +33,8 @@ Commands:
     init        Initialize the git directory structure
     cat-file    Provide content or type and size information for repository objects
     hash-object Compute object ID and optionally creates a blob from a file
-	ls-tree 	List the contents of a tree object`
+	ls-tree 	List the contents of a tree object
+	write-tree 	Create a tree object from the current working directory`
 	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
@@ -170,4 +173,25 @@ Usage: mygit ls-tree [options] <tree_sha>`)
 	}
 
 	return gitObject.PrintTreeContent(&options)
+}
+
+func writeTree(args []string) error {
+	flagSet := flag.NewFlagSet("write-tree", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Create a tree object from the current working directory
+
+Usage: mygit write-tree`)
+	}
+
+	flagSet.Parse(args)
+
+	treeEntry, err := mygit.RecordTree(".", true)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(treeEntry.Hash)
+
+	return nil
 }
