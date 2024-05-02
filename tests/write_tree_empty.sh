@@ -6,14 +6,6 @@ print_object() {
     done
 }
 
-prepare() {
-    echo "hello world" > hello.txt
-    mkdir merci
-    echo "test merci" > merci/test.txt
-}
-
-prepare
-
 ref_result=$(mktemp -d)
 
 git init > /dev/null 2>&1

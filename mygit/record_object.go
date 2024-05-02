@@ -1,7 +1,6 @@
 package mygit
 
 import (
-	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
@@ -93,7 +92,8 @@ func HashBlob(filePath string, writeOption bool) (*BlobInfo, error) {
 	shaString := fmt.Sprintf("%x", hash.Sum(nil))
 
 	if writeOption {
-		err := writeObject(shaString, []byte(header), bufio.NewReader(file))
+		file.Seek(0, 0)
+		err := writeObject(shaString, []byte(header), file)
 		if err != nil {
 			return nil, err
 		}
@@ -188,6 +188,12 @@ func RecordTree(folderPath string, writeOption bool) (*TreeEntry, error) {
 	}
 
 	entries := []*TreeEntry{}
+
+	// entries are already sorted by ReadDir
+	// so the following code is not needed normally:
+	// sort.Slice(entries, func(i, j int) bool {
+	// 	return entries[i].Name < entries[j].Name
+	// })
 
 	for _, dirEntry := range dirEntries {
 		if dirEntry.Name() == ".git" {
