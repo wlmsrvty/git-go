@@ -217,11 +217,29 @@ Options:
 	var commitMessage string
 	flagSet.StringVar(&commitMessage, "m", "", "Commit message")
 
+	// workaround for flag package not supporting options after arguments
+	var treeSha string
+	if len(args) > 1 {
+		switch args[0] {
+		case "-p":
+			flagSet.Parse(args)
+		case "-m":
+			flagSet.Parse(args)
+		default:
+			treeSha = args[0]
+			flagSet.Parse(args[1:])
+		}
+	}
+
 	flagSet.Parse(args)
 
-	if flagSet.NArg() < 1 {
+	if flagSet.NArg() < 1 && treeSha == "" {
 		flagSet.Usage()
 		os.Exit(1)
+	}
+
+	if treeSha == "" {
+		treeSha = flagSet.Arg(0)
 	}
 
 	if commitMessage == "" {
@@ -230,5 +248,5 @@ Options:
 		os.Exit(1)
 	}
 
-	return mygit.CommitTree(flagSet.Arg(0), parentCommit, commitMessage)
+	return mygit.CommitTree(treeSha, parentCommit, commitMessage)
 }

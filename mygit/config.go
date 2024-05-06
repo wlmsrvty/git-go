@@ -46,11 +46,18 @@ func getAuthorName() string {
 	if authorName == "" {
 		authorName = currentUserName()
 	}
+	if authorName == "" {
+		authorName = "mygit"
+	}
 	return authorName
 }
 
 func getAuthorEmail() string {
-	return os.Getenv("GIT_AUTHOR_EMAIL")
+	authorEmail := os.Getenv("GIT_AUTHOR_EMAIL")
+	if authorEmail == "" {
+		authorEmail = "mygit"
+	}
+	return authorEmail
 }
 
 func getAuthorDate() string {
@@ -66,6 +73,9 @@ func getCommitterName() string {
 	if committerName == "" {
 		committerName = getAuthorName()
 	}
+	if committerName == "" {
+		committerName = "mygit"
+	}
 	return committerName
 }
 
@@ -73,6 +83,9 @@ func getCommitterEmail() string {
 	commiterEmail := os.Getenv("GIT_COMMITTER_EMAIL")
 	if commiterEmail == "" {
 		commiterEmail = getAuthorEmail()
+	}
+	if commiterEmail == "" {
+		commiterEmail = "mygit"
 	}
 	return commiterEmail
 }

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 type HashObjectOptions struct {
@@ -212,12 +213,6 @@ func RecordTree(folderPath string, writeOption bool) (*TreeEntry, error) {
 
 	entries := []*TreeEntry{}
 
-	// entries are already sorted by ReadDir
-	// so the following code is not needed normally:
-	// sort.Slice(entries, func(i, j int) bool {
-	// 	return entries[i].Name < entries[j].Name
-	// })
-
 	for _, dirEntry := range dirEntries {
 		if dirEntry.Name() == ".git" {
 			continue
@@ -229,6 +224,12 @@ func RecordTree(folderPath string, writeOption bool) (*TreeEntry, error) {
 		}
 		entries = append(entries, entry)
 	}
+
+	// entries are already sorted by ReadDir
+	// so the following code is not needed normally:
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name < entries[j].Name
+	})
 
 	shaBytes, err := HashTree(&entries, writeOption)
 	if err != nil {
