@@ -13,8 +13,9 @@ import (
 type ObjectType string
 
 const (
-	ObjectTypeBlob ObjectType = "blob"
-	ObjectTypeTree ObjectType = "tree"
+	ObjectTypeBlob   ObjectType = "blob"
+	ObjectTypeTree   ObjectType = "tree"
+	ObjectTypeCommit ObjectType = "commit"
 )
 
 // TreeEntry represents an entry in a git tree object

@@ -24,6 +24,8 @@ var commands = []Command{
 		Run: git_ls_tree},
 	{Name: "write-tree",
 		Run: writeTree},
+	{Name: "commit-tree",
+		Run: commitTree},
 }
 
 func Usage() {
@@ -34,7 +36,8 @@ Commands:
     cat-file    Provide content or type and size information for repository objects
     hash-object Compute object ID and optionally creates a blob from a file
 	ls-tree 	List the contents of a tree object
-	write-tree 	Create a tree object from the current working directory`
+	write-tree 	Create a tree object from the current working directory
+	commit-tree Create a new commit object`
 	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
@@ -194,4 +197,38 @@ Usage: mygit write-tree`)
 	fmt.Println(treeEntry.Hash)
 
 	return nil
+}
+
+func commitTree(args []string) error {
+	flagSet := flag.NewFlagSet("commit-tree", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Create a new commit object
+
+Usage: mygit commit-tree [options] <tree_sha>
+
+Options:
+	-p <parent_commit>  Parent commit hash
+	-m <message>        Commit message`)
+	}
+
+	var parentCommit string
+	flagSet.StringVar(&parentCommit, "p", "", "Parent commit")
+	var commitMessage string
+	flagSet.StringVar(&commitMessage, "m", "", "Commit message")
+
+	flagSet.Parse(args)
+
+	if flagSet.NArg() < 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	if commitMessage == "" {
+		fmt.Fprintln(os.Stderr, "Commit message is required")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	return mygit.CommitTree(flagSet.Arg(0), parentCommit, commitMessage)
 }

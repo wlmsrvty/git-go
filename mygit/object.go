@@ -3,6 +3,7 @@ package mygit
 import (
 	"bufio"
 	"compress/zlib"
+	"crypto/sha1"
 	"fmt"
 	"io"
 	"os"
@@ -12,11 +13,12 @@ import (
 
 // Object represents a git object
 type Object struct {
-	Type    ObjectType
-	Size    int
-	Path    string
-	Content []byte
-	Hash    string
+	Type      ObjectType
+	Size      int
+	Path      string
+	Content   []byte
+	Hash      string
+	HashBytes []byte
 }
 
 // Returns the path to the object file in the .git directory
@@ -31,6 +33,8 @@ func NewObject(sha string) (*Object, error) {
 		return nil, fmt.Errorf("object %s does not exist", sha)
 	}
 
+	hash := sha1.New()
+
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -38,6 +42,30 @@ func NewObject(sha string) (*Object, error) {
 	defer file.Close()
 
 	zlibReader, err := zlib.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer zlibReader.Close()
+
+	_, err = io.Copy(hash, zlibReader)
+	if err != nil {
+		return nil, err
+	}
+	hashBytes := hash.Sum(nil)
+
+	// check if the hash of the object matches the given hash
+	if sha != fmt.Sprintf("%x", hashBytes) {
+		return nil, fmt.Errorf("corrupt object, hash mismatch")
+	}
+
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// reset zlibreader after seeking file to 0
+	// otherwise, zlibreader may not take into account the new position
+	zlibReader, err = zlib.NewReader(file)
 	if err != nil {
 		return nil, err
 	}
@@ -56,11 +84,12 @@ func NewObject(sha string) (*Object, error) {
 	}
 
 	return &Object{
-		Type:    objType,
-		Size:    objSize,
-		Path:    path,
-		Content: content,
-		Hash:    sha,
+		Type:      objType,
+		Size:      objSize,
+		Path:      path,
+		Content:   content,
+		Hash:      sha,
+		HashBytes: hashBytes,
 	}, nil
 }
 

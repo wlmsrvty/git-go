@@ -33,6 +33,29 @@ type BlobInfo struct {
 	FileInfo  *fs.FileInfo
 }
 
+func writeAnyObject(hashString string, content []byte) error {
+	objectFolderPath := fmt.Sprintf(".git/objects/%s", hashString[:2])
+	objectPath := fmt.Sprintf(".git/objects/%s/%s", hashString[:2], hashString[2:])
+
+	if err := os.MkdirAll(objectFolderPath, 0755); err != nil &&
+		!errors.Is(err, os.ErrExist) {
+		return err
+	}
+
+	objectFile, err := os.Create(objectPath)
+	if err != nil {
+		return err
+	}
+	defer objectFile.Close()
+
+	zlibWriter := zlib.NewWriter(objectFile)
+	defer zlibWriter.Close()
+
+	zlibWriter.Write(content)
+
+	return nil
+}
+
 func writeObject(sha string, header []byte, content io.Reader) error {
 	objectFolderPath := fmt.Sprintf(".git/objects/%s", sha[:2])
 	objectPath := fmt.Sprintf(".git/objects/%s/%s", sha[:2], sha[2:])
