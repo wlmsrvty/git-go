@@ -3,7 +3,7 @@ return_code=0
 
 repo='https://github.com/LazyVim/starter'
 
-echo $PWD
+echo "testing in $PWD"
 
 git ls-remote $repo > ref
 

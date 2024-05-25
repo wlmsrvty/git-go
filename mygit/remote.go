@@ -222,6 +222,8 @@ func parseRef(buf []byte) (*Ref, Cap, error) {
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, "\x00", "")
 
+	objectId = strings.TrimSpace(objectId)
+
 	return &Ref{
 		ObjectId: objectId,
 		Name:     name,
