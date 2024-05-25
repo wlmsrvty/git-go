@@ -26,6 +26,10 @@ var commands = []Command{
 		Run: writeTree},
 	{Name: "commit-tree",
 		Run: commitTree},
+	{Name: "clone",
+		Run: clone},
+	{Name: "ls-remote",
+		Run: lsRemote},
 }
 
 func Usage() {
@@ -33,11 +37,12 @@ func Usage() {
 
 Commands:
     init        Initialize the git directory structure
+    clone       Clone a repository into a new directory
     cat-file    Provide content or type and size information for repository objects
     hash-object Compute object ID and optionally creates a blob from a file
-	ls-tree 	List the contents of a tree object
-	write-tree 	Create a tree object from the current working directory
-	commit-tree Create a new commit object`
+    ls-tree 	List the contents of a tree object
+    write-tree 	Create a tree object from the current working directory
+    commit-tree Create a new commit object`
 	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
@@ -208,8 +213,8 @@ func commitTree(args []string) error {
 Usage: mygit commit-tree [options] <tree_sha>
 
 Options:
-	-p <parent_commit>  Parent commit hash
-	-m <message>        Commit message`)
+    -p <parent_commit>  Parent commit hash
+    -m <message>        Commit message`)
 	}
 
 	var parentCommit string
@@ -249,4 +254,47 @@ Options:
 	}
 
 	return mygit.CommitTree(treeSha, parentCommit, commitMessage)
+}
+
+func clone(args []string) error {
+	flagSet := flag.NewFlagSet("clone", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Clone a repository into a new directory
+
+Usage: mygit clone <url>`)
+	}
+	flagSet.Parse(args)
+
+	if flagSet.NArg() < 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	url := flagSet.Arg(0)
+
+	err := mygit.Clone(url)
+
+	return err
+}
+
+func lsRemote(args []string) error {
+	flagSet := flag.NewFlagSet("ls-remote", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`List references in a remote repository
+
+Usage: mygit ls-remote <url>`)
+	}
+	flagSet.Parse(args)
+
+	if flagSet.NArg() < 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	url := flagSet.Arg(0)
+	err := mygit.DisplayRemoteRefs(url)
+
+	return err
 }
