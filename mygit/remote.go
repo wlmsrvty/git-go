@@ -3,16 +3,21 @@ package mygit
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 const (
-	smartRefDiscoveryURL = "/info/refs?service=git-upload-pack"
+	smartRefDiscoveryPath = "/info/refs?service=git-upload-pack"
+	gitUploadPackPath     = "/git-upload-pack"
 )
 
 // Lists references in a remote repository
@@ -39,21 +44,85 @@ func Clone(url string) error {
 		return err
 	}
 
-	for _, ref := range remoteRefs.refs {
-		fmt.Println(ref)
+	if len(remoteRefs.refs) == 0 {
+		return fmt.Errorf("no refs found in remote repository")
 	}
+
+	// create negotation request
+	negotationRequest := createNegotationRequest("", remoteRefs.refs)
+
+	// get the packfile
+	requestReader := strings.NewReader(negotationRequest)
+	resp, err := http.Post(url+"/git-upload-pack", "application/x-git-upload-pack-request", requestReader)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error /git-upload-pack: %s", resp.Status)
+	}
+
+	// create repo
+	repoName := path.Base(url)
+	err = createRepo(repoName)
+	if err != nil {
+		return err
+	}
+
+	// save packfile
+	firstRef := remoteRefs.refs[0]
+	tempPackFileName := fmt.Sprintf("tmp_pack_%.5s", firstRef.ObjectId)
+	tempPackFilePath := path.Join(repoName, ".git", "objects", "pack", tempPackFileName)
+
+	tempPackFile, err := os.Create(tempPackFilePath)
+	if err != nil {
+		return err
+	}
+	defer tempPackFile.Close()
+
+	// skip "NAK" packet line
+	// "0008NAK\n"
+	// the rest corresponds to the packfile
+	_, err = resp.Body.Read(make([]byte, 8))
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(tempPackFile, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// parse packfile
+	tempPackFile.Seek(0, 0)
+	packFile, err := io.ReadAll(tempPackFile)
+	if err != nil {
+		return err
+	}
+
+	verison, numObjects, err := parsePackfileHeader(packFile)
+	if err != nil {
+		return err
+	}
+
+	err = verifyPackFileChecksum(packFile)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(verison, numObjects)
 
 	return nil
 }
 
 type remoteRefs struct {
-	refs []*Ref
-	cap  Cap
+	refs []*ref
+	cap  capabilities
 }
 
 // https://git-scm.com/docs/http-protocol#_smart_clients
 func discoverRefsSmartHttp(url string) (*remoteRefs, error) {
-	resp, err := http.Get(url + smartRefDiscoveryURL)
+	resp, err := http.Get(url + smartRefDiscoveryPath)
 	if err != nil {
 		return nil, err
 	}
@@ -190,14 +259,14 @@ func readPktLine(reader *bufio.Reader) ([]byte, error) {
 
 // ======================== Refs parsing ========================
 
-type Ref struct {
+type ref struct {
 	ObjectId string
 	Name     string
 }
 
-type Cap string
+type capabilities string
 
-func parseRef(buf []byte) (*Ref, Cap, error) {
+func parseRef(buf []byte) (*ref, capabilities, error) {
 	readerBytes := bytes.NewReader(buf)
 	reader := bufio.NewReader(readerBytes)
 
@@ -221,11 +290,101 @@ func parseRef(buf []byte) (*Ref, Cap, error) {
 
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, "\x00", "")
-
 	objectId = strings.TrimSpace(objectId)
+	cap = strings.TrimSpace(cap)
 
-	return &Ref{
+	return &ref{
 		ObjectId: objectId,
 		Name:     name,
-	}, Cap(cap), nil
+	}, capabilities(cap), nil
+}
+
+// ================= Pack file negotation =================
+
+// constructs a request in the form:
+//
+//	```
+//		0077want 8c25759f3c2b14e9eab301079c8b505b59b3e1ef multi_ack_detailed side-band-64k thin-pack ofs-delta agent=git/1.8.2
+//		0032want 8c25759f3c2b14e9eab301079c8b505b59b3e1ef
+//		0032want 4574b4c7bb073b6b661abd0558a639f7a32b3f8f
+//	```
+func createNegotationRequest(cap capabilities, reflist []*ref) string {
+	if len(reflist) == 0 {
+		return ""
+	}
+	firstLine := fmt.Sprintf("want %s %s\n", reflist[0].ObjectId, cap)
+	var sb strings.Builder
+	sb.WriteString(toPktLine(firstLine))
+	for _, ref := range reflist[1:] {
+		value := fmt.Sprintf("want %s\n", ref.ObjectId)
+		sb.WriteString(toPktLine(value))
+	}
+
+	const flushPkt = "0000"
+	sb.WriteString(flushPkt)
+	sb.WriteString(toPktLine("done\n"))
+
+	return sb.String()
+}
+
+// ======================== Pack file parsing ========================
+
+// Parses the packfile header
+// returns version, number of objects
+func parsePackfileHeader(packFile []byte) (uint32, uint32, error) {
+	packFileBuffer := bytes.NewReader(packFile)
+
+	magic := make([]byte, 4)
+	_, err := packFileBuffer.Read(magic)
+	if err != nil {
+		return 0, 0, err
+	}
+	if string(magic) != "PACK" {
+		return 0, 0, fmt.Errorf("invalid packfile header: %s", magic)
+	}
+
+	versionBytes := make([]byte, 4)
+	_, err = packFileBuffer.Read(versionBytes)
+	if err != nil {
+		return 0, 0, err
+	}
+	version := binary.BigEndian.Uint32(versionBytes)
+
+	numObjectsBytes := make([]byte, 4)
+	_, err = packFileBuffer.Read(numObjectsBytes)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	numObjects := binary.BigEndian.Uint32(numObjectsBytes)
+
+	return version, numObjects, nil
+}
+
+func verifyPackFileChecksum(packFile []byte) error {
+	checksum := packFile[len(packFile)-20:]
+	packFileContent := packFile[:len(packFile)-20]
+
+	computedChecksum := sha1.Sum(packFileContent)
+
+	if !bytes.Equal(checksum, computedChecksum[:]) {
+		return fmt.Errorf("invalid packfile checksum")
+	}
+
+	return nil
+}
+
+// ======================== Helpers ========================
+
+func toPktLine(value string) string {
+	return fmt.Sprintf("%04x%s", len(value)+4, value)
+}
+
+func createRepo(repoName string) error {
+	err := os.MkdirAll(path.Join(repoName, ".git", "objects", "pack"), 0755)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
