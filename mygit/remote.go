@@ -3,6 +3,7 @@ package mygit
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
@@ -68,11 +69,15 @@ func Clone(url string) error {
 	if err != nil {
 		return err
 	}
+	err = os.Chdir(repoName)
+	if err != nil {
+		return err
+	}
 
 	// save packfile
 	firstRef := remoteRefs.refs[0]
 	tempPackFileName := fmt.Sprintf("tmp_pack_%.5s", firstRef.ObjectId)
-	tempPackFilePath := path.Join(repoName, ".git", "objects", "pack", tempPackFileName)
+	tempPackFilePath := path.Join(".git", "objects", "pack", tempPackFileName)
 
 	tempPackFile, err := os.Create(tempPackFilePath)
 	if err != nil {
@@ -100,7 +105,7 @@ func Clone(url string) error {
 		return err
 	}
 
-	verison, numObjects, err := parsePackfileHeader(packFile)
+	_, numObjects, err := parsePackFileHeader(packFile)
 	if err != nil {
 		return err
 	}
@@ -110,7 +115,12 @@ func Clone(url string) error {
 		return err
 	}
 
-	fmt.Println(verison, numObjects)
+	fmt.Printf("remote: Number of objects: %d\n", numObjects)
+
+	err = parsePackFile(packFile, numObjects)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -331,7 +341,7 @@ func createNegotationRequest(cap capabilities, reflist []*ref) string {
 
 // Parses the packfile header
 // returns version, number of objects
-func parsePackfileHeader(packFile []byte) (uint32, uint32, error) {
+func parsePackFileHeader(packFile []byte) (uint32, uint32, error) {
 	packFileBuffer := bytes.NewReader(packFile)
 
 	magic := make([]byte, 4)
@@ -374,6 +384,208 @@ func verifyPackFileChecksum(packFile []byte) error {
 	return nil
 }
 
+func parsePackFile(packFile []byte, numberObjects uint32) error {
+	packFileBuffer := bytes.NewReader(packFile)
+
+	// skip header (12 bytes)
+	packFileBuffer.Seek(12, 0)
+
+	var deltaObjects []DeltaObject
+
+	// read object entries
+	var i uint32
+	for i = 0; i < numberObjects; i++ {
+		// read object header
+		size, objectType, err := parseObjectHeader(packFileBuffer)
+		if err != nil {
+			return err
+		}
+
+		// commit, tag, tree or blob
+		if objectType == OBJ_COMMIT ||
+			objectType == OBJ_TAG ||
+			objectType == OBJ_TREE ||
+			objectType == OBJ_BLOB {
+
+			object, err := parseObject(packFileBuffer)
+			if err != nil {
+				return err
+			}
+
+			if uint32(len(object)) != size {
+				return fmt.Errorf("pack file object size mismatch")
+			}
+
+			objectTypeStr := PackFileObjectTypeString[objectType]
+
+			// write object to disk
+			err = writePackFileObject(objectTypeStr, object)
+			if err != nil {
+				return err
+			}
+		} else if objectType == OBJ_OFS_DELTA {
+			size, err := parseSize(packFileBuffer)
+			if err != nil {
+				return err
+			}
+			object, err := parseObject(packFileBuffer)
+			if err != nil {
+				return err
+			}
+			if uint32(len(object)) != size {
+				return fmt.Errorf("pack file %s object size mismatch",
+					PackFileObjectTypeString[objectType])
+			}
+
+			// TODO: OBJECT OFFSET DELTA
+			panic("not implemented")
+
+		} else if objectType == OBJ_REF_DELTA {
+			hash := make([]byte, 20)
+			_, err := packFileBuffer.Read(hash)
+			if err != nil {
+				return err
+			}
+
+			object, err := parseObject(packFileBuffer)
+			if err != nil {
+				return err
+			}
+
+			if uint32(len(object)) != size {
+				return fmt.Errorf("pack file %s object size mismatch",
+					PackFileObjectTypeString[objectType])
+			}
+
+			deltaObjects = append(deltaObjects, DeltaObject{
+				baseObject: fmt.Sprintf("%x", hash),
+				data:       object,
+			})
+
+		} else {
+			return fmt.Errorf("invalid object type: %d", objectType)
+		}
+	}
+
+	if len(deltaObjects) > 0 {
+		// TODO:
+	}
+
+	return nil
+}
+
+// ======================== Object parsing ========================
+
+type PackFileObjectType int
+
+const (
+	OBJ_COMMIT    PackFileObjectType = 1
+	OBJ_TREE      PackFileObjectType = 2
+	OBJ_BLOB      PackFileObjectType = 3
+	OBJ_TAG       PackFileObjectType = 4
+	OBJ_OFS_DELTA PackFileObjectType = 6
+	OBJ_REF_DELTA PackFileObjectType = 7
+)
+
+var PackFileObjectTypeString = map[PackFileObjectType]string{
+	OBJ_COMMIT:    "commit",
+	OBJ_TREE:      "tree",
+	OBJ_BLOB:      "blob",
+	OBJ_TAG:       "tag",
+	OBJ_OFS_DELTA: "ofs-delta",
+	OBJ_REF_DELTA: "ref-delta",
+}
+
+func parseObjectHeader(packFileBuffer *bytes.Reader) (size uint32, objectType PackFileObjectType, err error) {
+	// read the first byte
+	firstByte, err := packFileBuffer.ReadByte()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Packfile object header format:
+	// ┌─────────┬──────────┬──────────┐
+	// │MSB 1 bit│Type 3 bit│Size 4 bit│
+	// └─────────┴──────────┴──────────┘
+	// ┌─────────┬──────────┐
+	// │MSB 1 bit│Size 7 bit│
+	// └─────────┴──────────┘
+	// remaining bytes for size to read...
+	//
+	// get only the first 4 bits for MSB and type
+	firstFourBytes := firstByte >> 4
+	objectType = PackFileObjectType(firstFourBytes & 0x7)
+	MSB := firstByte & 0x80 >> 7
+	size = uint32(firstByte & 0x0f)
+
+	shift := uint(4)
+
+	for MSB != 0 {
+		// read the next byte
+		b, err := packFileBuffer.ReadByte()
+		if err != nil {
+			return 0, 0, err
+		}
+
+		// update MSB
+		MSB = b & 0x80 >> 7
+		size += uint32(b&0x7f) << shift
+		shift += 7
+	}
+	return
+}
+
+func parseObject(packFileBuffer *bytes.Reader) ([]byte, error) {
+	zlibReader, err := zlib.NewReader(packFileBuffer)
+	if err != nil {
+		return nil, err
+	}
+	defer zlibReader.Close()
+
+	object, err := io.ReadAll(zlibReader)
+	if err != nil {
+		return nil, err
+	}
+
+	return object, nil
+}
+
+// reads a variable length integer from the packfile buffer
+// based on the MSB / SIZE format
+//
+// [MSB 1 bit][SIZE 7 bit]
+// [MSB 1 bit][SIZE 7 bit]
+// ...
+func parseSize(packFileBuffer *bytes.Reader) (uint32, error) {
+	b, err := packFileBuffer.ReadByte()
+	if err != nil {
+		return 0, err
+	}
+
+	size := uint32(b & 0x7f)
+	msb := b & 0x80 >> 7
+	shift := 7
+
+	for msb != 0 {
+		b, err = packFileBuffer.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		size += uint32(b&0x7f) << shift
+		msb = b & 0x80 >> 7
+		shift += 7
+	}
+
+	return size, nil
+}
+
+// ======================== Delta object ========================
+
+type DeltaObject struct {
+	baseObject string
+	data       []byte
+}
+
 // ======================== Helpers ========================
 
 func toPktLine(value string) string {
@@ -382,6 +594,26 @@ func toPktLine(value string) string {
 
 func createRepo(repoName string) error {
 	err := os.MkdirAll(path.Join(repoName, ".git", "objects", "pack"), 0755)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func writePackFileObject(objectType string, object []byte) error {
+	header := fmt.Sprintf("%s %d\x00", objectType, len(object))
+	hash := sha1.New()
+	if _, err := hash.Write([]byte(header)); err != nil {
+		return err
+	}
+	if _, err := hash.Write(object); err != nil {
+		return err
+	}
+
+	sha := fmt.Sprintf("%x", hash.Sum(nil))
+
+	err := writeObject(sha, []byte(header), bytes.NewReader(object))
 	if err != nil {
 		return err
 	}
