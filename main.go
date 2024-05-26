@@ -262,7 +262,7 @@ func clone(args []string) error {
 		fmt.Fprintln(os.Stderr,
 			`Clone a repository into a new directory
 
-Usage: mygit clone <url>`)
+Usage: mygit clone <url> [<directory>]`)
 	}
 	flagSet.Parse(args)
 
@@ -272,8 +272,12 @@ Usage: mygit clone <url>`)
 	}
 
 	url := flagSet.Arg(0)
+	repoName := ""
+	if flagSet.NArg() >= 2 {
+		repoName = flagSet.Arg(1)
+	}
 
-	err := mygit.Clone(url)
+	err := mygit.Clone(url, repoName)
 
 	return err
 }

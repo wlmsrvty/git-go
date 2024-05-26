@@ -39,7 +39,7 @@ func DisplayRemoteRefs(url string) error {
 
 // Clone clones a repository into a new directory
 // in the current working directory
-func Clone(url string) error {
+func Clone(url string, repoName string) error {
 	url = sanitizeURL(url)
 	remoteRefs, err := discoverRefsSmartHttp(url)
 	if err != nil {
@@ -65,7 +65,9 @@ func Clone(url string) error {
 	}
 
 	// create repo
-	repoName := path.Base(url)
+	if repoName == "" {
+		repoName = path.Base(url)
+	}
 	err = createRepo(repoName)
 	if err != nil {
 		return err
