@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -390,7 +391,7 @@ func parsePackFile(packFile []byte, numberObjects uint32) error {
 	// skip header (12 bytes)
 	packFileBuffer.Seek(12, 0)
 
-	var deltaObjects []DeltaObject
+	var deltaObjects []deltaObject
 
 	// read object entries
 	var i uint32
@@ -457,7 +458,7 @@ func parsePackFile(packFile []byte, numberObjects uint32) error {
 					PackFileObjectTypeString[objectType])
 			}
 
-			deltaObjects = append(deltaObjects, DeltaObject{
+			deltaObjects = append(deltaObjects, deltaObject{
 				baseObject: fmt.Sprintf("%x", hash),
 				data:       object,
 			})
@@ -468,7 +469,10 @@ func parsePackFile(packFile []byte, numberObjects uint32) error {
 	}
 
 	if len(deltaObjects) > 0 {
-		// TODO:
+		err := applyDeltas(deltaObjects)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -556,8 +560,8 @@ func parseObject(packFileBuffer *bytes.Reader) ([]byte, error) {
 // [MSB 1 bit][SIZE 7 bit]
 // [MSB 1 bit][SIZE 7 bit]
 // ...
-func parseSize(packFileBuffer *bytes.Reader) (uint32, error) {
-	b, err := packFileBuffer.ReadByte()
+func parseSize(data *bytes.Reader) (uint32, error) {
+	b, err := data.ReadByte()
 	if err != nil {
 		return 0, err
 	}
@@ -567,7 +571,7 @@ func parseSize(packFileBuffer *bytes.Reader) (uint32, error) {
 	shift := 7
 
 	for msb != 0 {
-		b, err = packFileBuffer.ReadByte()
+		b, err = data.ReadByte()
 		if err != nil {
 			return 0, err
 		}
@@ -581,9 +585,129 @@ func parseSize(packFileBuffer *bytes.Reader) (uint32, error) {
 
 // ======================== Delta object ========================
 
-type DeltaObject struct {
+type deltaObject struct {
 	baseObject string
 	data       []byte
+}
+
+func applyDeltas(deltaObjects []deltaObject) error {
+	// We would need to check if deltaObjects can be resolved
+	// that is: if the root base object is already written to disk
+
+	for len(deltaObjects) > 0 {
+		noBaseDeltaObjects := []deltaObject{}
+		atLeastOneBaseObject := false
+
+		for _, deltaObject := range deltaObjects {
+			if objectExists(deltaObject.baseObject) {
+				atLeastOneBaseObject = true
+				err := applyDelta(deltaObject)
+				if err != nil {
+					return err
+				}
+			} else {
+				noBaseDeltaObjects = append(noBaseDeltaObjects, deltaObject)
+			}
+		}
+
+		if !atLeastOneBaseObject {
+			return fmt.Errorf("no base object found for delta objects, cannot resolve")
+		}
+
+		deltaObjects = noBaseDeltaObjects
+	}
+
+	return nil
+}
+
+func applyDelta(deltaObject deltaObject) error {
+	baseObject, err := NewObject(deltaObject.baseObject)
+	if err != nil {
+		return err
+	}
+
+	deltaData := bytes.NewReader(deltaObject.data)
+	baseSize, err := parseSize(deltaData) // source buffer size
+	if err != nil {
+		return err
+	}
+
+	// check if the base object size matches the size in the delta object
+	if baseSize != uint32(len(baseObject.Content)) {
+		return fmt.Errorf("base object size mismatch")
+	}
+
+	expectedSize, err := parseSize(deltaData) // target buffer size
+	if err != nil {
+		return err
+	}
+
+	buffer := bytes.NewBuffer(nil)
+
+	for deltaData.Len() > 0 {
+		opCode, err := deltaData.ReadByte()
+		if err != nil {
+			return err
+		}
+
+		// check MSB
+		// if MSB is set => copy instruction
+		// else => insert instruction
+
+		// Check gitformat-pack.txt
+		// https://github.com/git/git/blob/795ea8776befc95ea2becd8020c7a284677b4161/Documentation/gitformat-pack.txt
+
+		if opCode&0x80 != 0 { // copy instruction
+			//  +----------+---------+---------+---------+---------+-------+-------+-------+
+			//  | 1xxxxxxx | offset1 | offset2 | offset3 | offset4 | size1 | size2 | size3 |
+			//  +----------+---------+---------+---------+---------+-------+-------+-------+
+			arg := uint64(0)
+			for bit := 0; bit < 7; bit++ {
+				if opCode&(1<<bit) != 0 {
+					nextByte, err := deltaData.ReadByte()
+					if err != nil {
+						return err
+					}
+					arg |= uint64(nextByte) << (bit * 8)
+				}
+			}
+			offset := arg & 0xffffffff     // 4 bytes
+			size := (arg >> 32) & 0xffffff // skip the 4 bytes and get 3 last bytes
+			if size == 0 {
+				size = 0x10000
+			}
+			buffer.Write(baseObject.Content[offset : offset+size])
+
+		} else { // insert instruction
+			size := uint32(opCode & 0x7f)
+			data := make([]byte, size)
+			_, err := deltaData.Read(data)
+			if err != nil {
+				return err
+			}
+			buffer.Write(data)
+		}
+	}
+
+	if buffer.Len() != int(expectedSize) {
+		return fmt.Errorf("delta object size mismatch")
+	}
+
+	// write object to disk
+	err = writePackFileObject(string(baseObject.Type), buffer.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func objectExists(sha string) bool {
+	objectPath := getObjectPath(sha)
+	if _, err := os.Stat(objectPath); err != nil || errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return true
 }
 
 // ======================== Helpers ========================
