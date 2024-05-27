@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"strings"
 )
 
@@ -100,4 +102,43 @@ func parseTree(objContent *bufio.Reader) ([]TreeEntry, error) {
 	}
 
 	return entries, nil
+}
+
+func writeTreeToDisk(treeObject *Object, treePath string) error {
+	if treeObject.Type != ObjectTypeTree {
+		return fmt.Errorf("object %s is not a tree", treeObject.Hash)
+	}
+
+	err := os.MkdirAll(treePath, 0755)
+	if err != nil {
+		return err
+	}
+
+	treeEntries, err := parseTree(bufio.NewReader(bytes.NewReader(treeObject.Content)))
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range treeEntries {
+		object, err := NewObject(entry.Hash)
+		if err != nil {
+			return err
+		}
+		fullpath := path.Join(treePath, entry.Name)
+		if entry.Type == ObjectTypeBlob {
+			err := writeBlobToDisk(object, fullpath)
+			if err != nil {
+				return err
+			}
+		} else if entry.Type == ObjectTypeTree {
+			err := writeTreeToDisk(object, fullpath)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("invalid object type %s", entry.Type)
+		}
+	}
+
+	return nil
 }

@@ -7,6 +7,22 @@ import (
 
 // Initialize creates the necessary directories and files for a new git repository
 func Initialize() error {
+	err := createInitStructure(noPrint)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type printOption int
+
+const (
+	noPrint  printOption = iota
+	yesPrint printOption = iota
+)
+
+func createInitStructure(pOption printOption) error {
 	dirs := []string{".git", ".git/objects", ".git/refs"}
 	existing := false
 	for _, dir := range dirs {
@@ -32,10 +48,12 @@ func Initialize() error {
 		return err
 	}
 
-	if existing {
-		fmt.Printf("Reinitialized existing Git repository in %s\n", path)
-	} else {
-		fmt.Printf("Initialized empty Git repository in %s/.git/\n", path)
+	if pOption == yesPrint {
+		if existing {
+			fmt.Printf("Reinitialized existing Git repository in %s\n", path)
+		} else {
+			fmt.Printf("Initialized empty Git repository in %s/.git/\n", path)
+		}
 	}
 
 	return nil

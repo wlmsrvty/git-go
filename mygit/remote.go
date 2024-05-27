@@ -40,6 +40,27 @@ func DisplayRemoteRefs(url string) error {
 // Clone clones a repository into a new directory
 // in the current working directory
 func Clone(url string, repoName string) error {
+	if repoName == "" {
+		repoName = path.Base(url)
+	}
+
+	fmt.Printf("Cloning into '%s'...\n", repoName)
+
+	// create repo
+	err := os.MkdirAll(repoName, 0755)
+	if err != nil {
+		return err
+	}
+	err = os.Chdir(repoName)
+	if err != nil {
+		return err
+	}
+	// init repo
+	err = createInitStructure(noPrint)
+	if err != nil {
+		return err
+	}
+
 	url = sanitizeURL(url)
 	remoteRefs, err := discoverRefsSmartHttp(url)
 	if err != nil {
@@ -64,22 +85,13 @@ func Clone(url string, repoName string) error {
 		return fmt.Errorf("error /git-upload-pack: %s", resp.Status)
 	}
 
-	// create repo
-	if repoName == "" {
-		repoName = path.Base(url)
-	}
-	err = createRepo(repoName)
-	if err != nil {
-		return err
-	}
-	err = os.Chdir(repoName)
-	if err != nil {
-		return err
-	}
-
 	// save packfile
 	firstRef := remoteRefs.refs[0]
 	tempPackFileName := fmt.Sprintf("tmp_pack_%.5s", firstRef.ObjectId)
+	err = os.MkdirAll(path.Join(".git", "objects", "pack"), 0755)
+	if err != nil {
+		return err
+	}
 	tempPackFilePath := path.Join(".git", "objects", "pack", tempPackFileName)
 
 	tempPackFile, err := os.Create(tempPackFilePath)
@@ -121,6 +133,27 @@ func Clone(url string, repoName string) error {
 	fmt.Printf("remote: Number of objects: %d\n", numObjects)
 
 	err = parsePackFile(packFile, numObjects)
+	if err != nil {
+		return err
+	}
+
+	// checkout the HEAD ref and write files to disk
+	headRef := remoteRefs.refs[0]
+	object, err := NewObject(headRef.ObjectId)
+	if err != nil {
+		return err
+	}
+
+	commitObject, err := parseCommitObject(object.Content)
+	if err != nil {
+		return err
+	}
+
+	treeObject, err := NewObject(commitObject.Tree)
+	if err != nil {
+		return err
+	}
+	err = writeTreeToDisk(treeObject, ".")
 	if err != nil {
 		return err
 	}
@@ -596,6 +629,7 @@ func applyDeltas(deltaObjects []deltaObject) error {
 	// We would need to check if deltaObjects can be resolved
 	// that is: if the root base object is already written to disk
 
+	fmt.Printf("remote: Resolving deltas: %d\n", len(deltaObjects))
 	for len(deltaObjects) > 0 {
 		noBaseDeltaObjects := []deltaObject{}
 		atLeastOneBaseObject := false
@@ -716,15 +750,6 @@ func objectExists(sha string) bool {
 
 func toPktLine(value string) string {
 	return fmt.Sprintf("%04x%s", len(value)+4, value)
-}
-
-func createRepo(repoName string) error {
-	err := os.MkdirAll(path.Join(repoName, ".git", "objects", "pack"), 0755)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func writePackFileObject(objectType string, object []byte) error {

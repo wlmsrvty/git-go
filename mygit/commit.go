@@ -87,3 +87,27 @@ func CommitTree(treeSha string, parentCommit string, commitMessage string) error
 
 	return nil
 }
+
+type CommitObject struct {
+	Tree string
+}
+
+func parseCommitObject(content []byte) (*CommitObject, error) {
+	buffer := bytes.NewBuffer(content)
+	prefix, err := buffer.ReadString(' ')
+	if err != nil {
+		return nil, err
+	}
+	if prefix != "tree " {
+		return nil, fmt.Errorf("invalid commit object")
+	}
+
+	tree, err := buffer.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	return &CommitObject{
+		Tree: tree[:len(tree)-1],
+	}, nil
+}
