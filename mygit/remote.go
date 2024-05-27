@@ -150,7 +150,7 @@ func Clone(url string, repoName string) error {
 		return err
 	}
 
-	commitObject, err := parseCommitObject(object.Content)
+	commitObject, err := parseCommitObject(object)
 	if err != nil {
 		return err
 	}

@@ -30,6 +30,8 @@ var commands = []Command{
 		Run: clone},
 	{Name: "ls-remote",
 		Run: lsRemote},
+	{Name: "log",
+		Run: logCommit},
 }
 
 func Usage() {
@@ -42,7 +44,10 @@ Commands:
     hash-object Compute object ID and optionally creates a blob from a file
     ls-tree 	List the contents of a tree object
     write-tree 	Create a tree object from the current working directory
-    commit-tree Create a new commit object`
+    commit-tree Create a new commit object
+    clone	    Clone a repository into a new directory
+    ls-remote   List references in a remote repository
+    log 	    Show commit logs for a commit ID`
 	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
@@ -301,4 +306,27 @@ Usage: mygit ls-remote <url>`)
 	err := mygit.DisplayRemoteRefs(url)
 
 	return err
+}
+
+func logCommit(args []string) error {
+	flagSet := flag.NewFlagSet("log", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Show commit logs for a commit ID
+
+Usage: mygit log [<commit_id>]`)
+	}
+	if err := flagSet.Parse(args); err != nil {
+		return err
+	}
+
+	commitId := ""
+	if flagSet.NArg() > 0 {
+		commitId = flagSet.Arg(0)
+	}
+	if err := mygit.Log(commitId); err != nil {
+		return err
+	}
+
+	return nil
 }
