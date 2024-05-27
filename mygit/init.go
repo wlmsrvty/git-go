@@ -5,6 +5,15 @@ import (
 	"os"
 )
 
+const master = "master"
+
+type printOption int
+
+const (
+	noPrint  printOption = iota
+	yesPrint printOption = iota
+)
+
 // Initialize creates the necessary directories and files for a new git repository
 func Initialize() error {
 	err := createInitStructure(noPrint)
@@ -14,13 +23,6 @@ func Initialize() error {
 
 	return nil
 }
-
-type printOption int
-
-const (
-	noPrint  printOption = iota
-	yesPrint printOption = iota
-)
 
 func createInitStructure(pOption printOption) error {
 	dirs := []string{".git", ".git/objects", ".git/refs"}
@@ -38,7 +40,7 @@ func createInitStructure(pOption printOption) error {
 		}
 	}
 
-	headFileContents := []byte("ref: refs/heads/main\n")
+	headFileContents := []byte("ref: refs/heads/" + master + "\n")
 	if err := os.WriteFile(".git/HEAD", headFileContents, 0644); err != nil {
 		return err
 	}

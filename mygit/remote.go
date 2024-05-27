@@ -18,8 +18,6 @@ import (
 	"strings"
 )
 
-const master = "master"
-
 const (
 	smartRefDiscoveryPath = "/info/refs?service=git-upload-pack"
 	gitUploadPackPath     = "/git-upload-pack"
