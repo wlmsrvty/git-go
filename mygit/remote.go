@@ -12,10 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
+
+const master = "master"
 
 const (
 	smartRefDiscoveryPath = "/info/refs?service=git-upload-pack"
@@ -63,6 +66,11 @@ func Clone(url string, repoName string) error {
 
 	url = sanitizeURL(url)
 	remoteRefs, err := discoverRefsSmartHttp(url)
+	if err != nil {
+		return err
+	}
+
+	err = writeRefsToDisk(remoteRefs.refs)
 	if err != nil {
 		return err
 	}
@@ -225,6 +233,41 @@ func discoverRefsSmartHttp(url string) (*remoteRefs, error) {
 	}
 
 	return &remoteRefs, nil
+}
+
+func writeRefsToDisk(refs []*ref) error {
+	// remotes/origin/HEAD
+	err := os.MkdirAll(".git/refs/remotes/origin/", 0755)
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile(".git/refs/remotes/origin/HEAD",
+		[]byte("ref: refs/remotes/origin/"+master+"\n"), 0644)
+	if err != nil {
+		return err
+	}
+
+	// tags
+	err = os.MkdirAll(".git/refs/tags", 0755)
+	if err != nil {
+		return err
+	}
+
+	for _, ref := range refs {
+		if ref.Name != "HEAD" {
+			refPath := path.Join(".git", ref.Name)
+			folder := filepath.Dir(refPath)
+			err := os.MkdirAll(folder, 0755)
+			if err != nil {
+				return err
+			}
+			err = os.WriteFile(refPath, []byte(ref.ObjectId+"\n"), 0644)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func pktLineValue(line string) (string, error) {
