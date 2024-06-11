@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/codecrafters-io/git-starter-go/mygit"
+	"github.com/wlmsrvty/git-go/mygit"
 )
 
 type Command struct {
