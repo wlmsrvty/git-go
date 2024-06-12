@@ -41,16 +41,15 @@ func Usage() {
 
 Commands:
     init        Initialize the git directory structure
-    clone       Clone a repository into a new directory
     cat-file    Provide content or type and size information for repository objects
     hash-object Compute object ID and optionally creates a blob from a file
     ls-tree 	List the contents of a tree object
     write-tree 	Create a tree object from the current working directory
     commit-tree Create a new commit object
-    clone	    Clone a repository into a new directory
+    clone       Clone a repository into a new directory
     ls-remote   List references in a remote repository
-    log 	    Show commit logs for a commit ID
-	commit 		Record changes to the repository`
+    log         Show commit logs for a commit ID
+    commit      Record changes to the repository`
 	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
