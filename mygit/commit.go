@@ -5,18 +5,21 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
 
-func CommitTree(treeSha string, parentCommit string, commitMessage string) error {
+func createCommitObject(treeSha string, parentCommit string, commitMessage string) (
+	[]byte, string, error) {
 	object, err := NewObject(treeSha)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
 	if object.Type != ObjectTypeTree {
-		return fmt.Errorf("given object is not a tree")
+		return nil, "", fmt.Errorf("given object is not a tree")
 	}
 
 	// TODO: check parentCommit object
@@ -24,11 +27,11 @@ func CommitTree(treeSha string, parentCommit string, commitMessage string) error
 	if parentCommit != "" {
 		parentCommitObject, err = NewObject(parentCommit)
 		if err != nil {
-			return err
+			return nil, "", err
 		}
 
 		if parentCommitObject.Type != ObjectTypeCommit {
-			return fmt.Errorf("given parent object is not a commit")
+			return nil, "", fmt.Errorf("given parent object is not a commit")
 		}
 	}
 
@@ -47,11 +50,11 @@ func CommitTree(treeSha string, parentCommit string, commitMessage string) error
 	// author
 	authorName := getAuthorName()
 	if authorName == "" {
-		return fmt.Errorf("user name not set")
+		return nil, "", fmt.Errorf("user name not set")
 	}
 	authorEmail := getAuthorEmail()
 	if authorEmail == "" {
-		return fmt.Errorf("user email not set")
+		return nil, "", fmt.Errorf("user email not set")
 	}
 	authorText := fmt.Sprintf("author %s <%s> %s\n", authorName, authorEmail, getAuthorDate())
 	commitContent.WriteString(authorText)
@@ -59,11 +62,11 @@ func CommitTree(treeSha string, parentCommit string, commitMessage string) error
 	// committer
 	committerName := getCommitterName()
 	if committerName == "" {
-		return fmt.Errorf("committer name not set")
+		return nil, "", fmt.Errorf("committer name not set")
 	}
 	commiterEmail := getCommitterEmail()
 	if commiterEmail == "" {
-		return fmt.Errorf("committer email not set")
+		return nil, "", fmt.Errorf("committer email not set")
 	}
 	committerText := fmt.Sprintf("committer %s <%s> %s\n", committerName, commiterEmail, getCommitterDate())
 	commitContent.WriteString(committerText)
@@ -84,11 +87,21 @@ func CommitTree(treeSha string, parentCommit string, commitMessage string) error
 	hash.Write(commitRawBytes)
 	hashString := fmt.Sprintf("%x", hash.Sum(nil))
 
-	writeAnyObject(hashString, commitRawBytes)
+	return commitRawBytes, hashString, nil
+}
 
-	fmt.Println(hashString)
+func CommitTree(treeSha string, parentCommit string, commitMessage string) (string, error) {
+	commitRawBytes, hashString, err := createCommitObject(treeSha, parentCommit, commitMessage)
+	if err != nil {
+		return "", err
+	}
 
-	return nil
+	err = writeAnyObject(hashString, commitRawBytes)
+	if err != nil {
+		return "", err
+	}
+
+	return hashString, nil
 }
 
 type CommitObject struct {
@@ -190,6 +203,9 @@ func parseCommitObject(object *Object) (*CommitObject, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO: gpgsig possibly here
+
 	if line != "\n" {
 		return nil, fmt.Errorf("invalid commit object")
 	}
@@ -216,4 +232,58 @@ func parseCommitObject(object *Object) (*CommitObject, error) {
 
 		Message: message,
 	}, nil
+}
+
+func setHeadOID(oid string) error {
+	data, err := os.ReadFile(".git/HEAD")
+	if err != nil {
+		return err
+	}
+
+	ref := strings.Split(string(data), " ")[1]
+	ref = strings.TrimSpace(ref)
+
+	refPath := ".git/" + ref
+
+	dir := filepath.Dir(refPath)
+
+	err = os.MkdirAll(dir, 0755)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(refPath, []byte(oid), 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Commit(message string) error {
+	// get HEAD commit
+	head, err := getHeadOID()
+	if err != nil {
+		return err
+	}
+
+	treeEntry, err := RecordTree(".", true)
+	if err != nil {
+		return err
+	}
+
+	currentTree := treeEntry.Hash
+
+	hashCommit, err := CommitTree(currentTree, head, message)
+	if err != nil {
+		return err
+	}
+
+	// update HEAD
+	err = setHeadOID(hashCommit)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

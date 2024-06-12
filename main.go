@@ -32,6 +32,8 @@ var commands = []Command{
 		Run: lsRemote},
 	{Name: "log",
 		Run: logCommit},
+	{Name: "commit",
+		Run: commit},
 }
 
 func Usage() {
@@ -47,7 +49,8 @@ Commands:
     commit-tree Create a new commit object
     clone	    Clone a repository into a new directory
     ls-remote   List references in a remote repository
-    log 	    Show commit logs for a commit ID`
+    log 	    Show commit logs for a commit ID
+	commit 		Record changes to the repository`
 	fmt.Fprintf(os.Stderr, "%s\n", usage)
 }
 
@@ -258,7 +261,14 @@ Options:
 		os.Exit(1)
 	}
 
-	return mygit.CommitTree(treeSha, parentCommit, commitMessage)
+	commitOID, err := mygit.CommitTree(treeSha, parentCommit, commitMessage)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(commitOID)
+
+	return nil
 }
 
 func clone(args []string) error {
@@ -325,6 +335,36 @@ Usage: mygit log [<commit_id>]`)
 		commitId = flagSet.Arg(0)
 	}
 	if err := mygit.Log(commitId); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func commit(args []string) error {
+	flagSet := flag.NewFlagSet("commit", flag.ExitOnError)
+	flagSet.Usage = func() {
+		fmt.Fprintln(os.Stderr,
+			`Record changes to the repository
+
+Usage: mygit commit -m <message>`)
+	}
+
+	var message string
+	flagSet.StringVar(&message, "m", "", "Commit message")
+
+	var allowEmptyMessage bool
+	flagSet.BoolVar(&allowEmptyMessage, "allow-empty-message", false, "Allow empty message")
+
+	if err := flagSet.Parse(args); err != nil {
+		return err
+	}
+
+	if message == "" && !allowEmptyMessage {
+		return fmt.Errorf("commit message is required")
+	}
+
+	if err := mygit.Commit(message); err != nil {
 		return err
 	}
 

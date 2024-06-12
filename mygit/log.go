@@ -100,7 +100,11 @@ func getHeadOID() (string, error) {
 	}
 	ref := strings.Split(string(data), " ")[1]
 	ref = strings.TrimSpace(ref)
+
 	data, err = os.ReadFile(".git/" + ref)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
