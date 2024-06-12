@@ -16,7 +16,7 @@ const (
 
 // Initialize creates the necessary directories and files for a new git repository
 func Initialize() error {
-	err := createInitStructure(noPrint)
+	err := createInitStructure(yesPrint)
 	if err != nil {
 		return err
 	}

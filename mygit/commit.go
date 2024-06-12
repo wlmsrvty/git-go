@@ -285,5 +285,7 @@ func Commit(message string) error {
 		return err
 	}
 
+	fmt.Printf("[%s] %s\n", hashCommit, message)
+
 	return nil
 }
